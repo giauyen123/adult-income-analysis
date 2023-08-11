@@ -1,0 +1,366 @@
+---
+title: "Adult Income Dataset Analysis"
+output: html_notebook
+---
+
+Name: Uyen Nguyen Class: STA4102
+
+Adult Income Level Prediction using Machine Learning Classification Techniques
+
+I. Introduction
+
+This project utilizes the Adult Income Dataset from UCI Machine Learning Repository. The response variable is income level, which is binary data that takes 2 values. \>50k indicates an individual earns more than \$50000 annually while \<=50k specifies that they make less than or equal to \$50000 a year. The explanatory variables include age, workclass, final weight, education, education number, marital status, occupation, relationship, race, sex, capital gain, capital loss, hours per week, native country.
+
+First I will perform data cleaning, then exploratory data analysis and data visualization to have the initial understanding of the relations between different features and income level. Finally, I will utilize machine learning models to perform the classification, namely random forest, logistic regression, support vector machine and decision tree to find out what methods are most effective in predicting an individual's income based on many factors.
+
+II. Data
+
+To begin with, I will upload the necessary library and load the csv file of the dataset into RStudio and check the first 6 rows to ensure the dataset is correct. There are 32561 rows and 15 columns.
+
+```{r}
+#import library
+library("ggplot2")
+library("dplyr")
+
+#load file
+df <- read.csv('C:/Users/Gia Uyen/Downloads/Adult_Income.csv')
+print(head(df))
+```
+
+```{r}
+dim(df)
+```
+
+Cleaning data
+
+It is noticed that there are some columns labeled with the wrong data types. To fix it, I create a list of columns with wrong data types and convert them from character to factor. Also, it turns out that the missing values are not labeled as NA but instead with a question mark "?". Thus, I replace "?" values with NA and then examine the percentage of NA values in the dataset. Na values appear in workclass, occupation and native country columns, with 5.63%, 5.66% and 1.79% respectively. Because the NA values only account for a small percentage, they are removed from the dataset. I also removed extra whitespace present in many values to avoid creating confusion when filtering out data.
+
+```{r}
+#Missing values
+sum(is.na(df))
+```
+
+```{r}
+#replace ? with NA
+df[df == " ?"] <- NA
+
+#Calculate NA percentage in the dataset
+print(sapply(df, function(df){ sum(is.na(df)==T) * 100 /length(df) }))
+```
+
+```{r}
+#Because the NA values only account for more than 5% at max, so we can remove it
+df <- na.omit(df)
+
+sum(is.na(df))
+```
+
+```{r}
+#remove whitespace from the beginning of the string of each column
+df[]<- lapply(df,trimws)
+```
+
+```{r}
+#change data types to numeric and factor
+num_var <- c("age","final.weight","education.number",
+             "capital.gain","capital.loss","hours.per.week")
+df[num_var] <- sapply(df[num_var], as.numeric)
+
+categ_var <- c("workclass","education","marital.status",
+               "occupation","relationship","race",
+               "sex","native.country")
+df[,categ_var] <- lapply(df[,categ_var],factor)
+
+str(df)
+```
+
+The graph below shows the correlation between the income level and quantitative features, including age, final weight, education number, capital gain, capital loss, hours per week. Since the income column is categorical data, I turned the data into 0 and 1 to be able to compare with other quantitative features, in which 0 represents income less than or equal to \$50k and 1 represents income more than \$50k. The correlation heatmap shows that the final weight does not have the least correlation with income, with r = -0.01 while education number appears to be more correlated with income (r = 0.34).
+
+```{r}
+corr_var <- c("age","final.weight","education.number",
+             "capital.gain","capital.loss","hours.per.week","income")
+df$income<-ifelse(df$income =='<=50K',0,1)
+df$income <- as.numeric(df$income)
+correlation <- round(cor(df[corr_var]),2)
+correlation
+```
+
+```{r}
+library(reshape2)
+melted_corr <- melt(correlation)
+ggplot(data = melted_corr, aes(x=Var1, y=Var2, fill=value)) + 
+  geom_tile()
+```
+
+Because the final weight column doesn't have much impact while capital gain and capital loss columns contain many zero values, I removed the columns out of the dataset. Additionally, I removed the native country column because a majority of people come from the United States and only a small number come from other countries.
+
+```{r}
+#Because final weight column doesn't have much impact and capital gain and capital loss columns contain many zero value, so we will remove the columns out of the dataset
+df$final.weight = NULL
+df$capital.gain = NULL
+df$capital.loss = NULL
+df$native.country = NULL
+
+```
+
+```{r}
+summary(df)
+```
+
+Age vs Income
+
+The figure below shows that the age distribution skews right, with a majority of the entries having ages between 27 and 50.
+
+```{r}
+df$age = as.numeric(df$age)
+
+hist(df$age,col = 'lavender', main = "Age Distribution", 
+     xlab = "Age", ylab = "Number of people",breaks = 100,prob = T)
+abline(v=quantile(df$age, .25), col='red', lwd = 2, lty = 'dashed')
+abline(v=quantile(df$age, .50), col='red', lwd = 2, lty = 'dashed')
+abline(v=quantile(df$age, .75), col='red', lwd = 2, lty = 'dashed')
+lines(density(df$age),col='purple',lwd = 2)
+```
+
+The stacked histogram and boxplot below illustrate the income distribution by age. Most people who make more than \$50k are between their mid thirties to mid fifties.
+
+```{r}
+df$income <- as.factor(df$income)
+ggplot(df, aes(x=age, fill=income)) + 
+  geom_histogram(alpha=0.5, bins=30, color = 'black') +
+  geom_density(aes(y=after_stat(density), fill=income), alpha=0.5)+
+  scale_fill_manual(values=c("lightgreen", "salmon")) +
+  labs(x="Age", y="Count") +
+  ggtitle('Income Classification by Age')
+  theme_classic()
+```
+
+```{r}
+ggplot(df, aes(x= income, y=age)) + 
+  geom_boxplot(fill="salmon") +
+  labs(x="Income", y="Age") +
+  ggtitle("Age Distribution by Income Levels") +
+  theme_classic()
+  
+```
+
+For the workclass column, I combine "State-gov", "Local-gov", "Federal-gov" as "Government", and "Self-emp-not-inc", "Self-emp-inc" as "Self-employment", and change "Without-pay" to "Unemployment". This would allow me to interpret the models late on easier.
+
+```{r}
+#Combining like factors of workclass column
+df$workclass <- as.character(df$workclass)
+
+df$workclass[df$workclass == "State-gov" | df$workclass == "Local-gov" | df$workclass == "Federal-gov"] <- "Government"
+
+df$workclass[df$workclass == "Self-emp-not-inc" | df$workclass == "Self-emp-inc"] <- "Self_Employment"
+
+df$workclass[df$workclass == "Without-pay"] <- "Unemployment"
+
+unique(df$workclass)
+```
+
+From the graph, people who work for private corporations tend to earn income more than \$50k the most. There seems to be no distinguishable difference between working for Governmen and Self-Employment.
+
+```{r}
+ggplot(df, aes(x=workclass, fill=income)) + 
+  geom_bar() +
+  labs(x="Workclass", y="Count") +
+  ggtitle('Income Classification by Workclass')+
+  theme_classic()
+```
+
+Next, I also combine factors in Education column to make the data easier to interpret. "Bachelors", "Masters", "Doctorate", "Prof-school" are lumped as "Higher Education". "Assoc-acdm", "Assoc-voc" are lumped as "Associates Degree". "HS-grad", "12th", "11th", "10th" are lumped as "High School". I keep the "Some college" factor and the remaining factors are lumped as "Others".
+
+```{r}
+#Combining like factors of workclass column
+df$education <- as.character(df$education)
+
+df$education[df$education == "Bachelors" | df$education == "Masters" | df$education == "Doctorate" | df$education == "Prof-school"] <- "Higher Education"
+
+df$education[df$education == "Assoc-acdm" | df$education == "Assoc-voc"] <- "Associates Degree"
+
+df$education[df$education == "HS-grad" | df$education == "12th" | df$education == "11th" | df$education == "10th"] <- "High School"
+
+df$education[df$education == "Some-college"] <- "Some College"
+
+df$education[df$education == "Preschool" | df$education == "1st-4th" | df$education == "5th-6th" | df$education == "7th-8th" | df$education == "9th"] <- "Others"
+
+unique(df$education)
+
+```
+
+In this dataset, the majority of people finished high school. However, people who have higher education (who have Bachelors degree or above) are most likely to to earn more than \$50k. This result is consistent when we look at the education number. People who have 13 years of education tend to have higher income than others. Also, this observation explains the high correlation between education number and income columns as stated previously.
+
+```{r}
+# plot the education distribution and sort the values
+ggplot(df, aes(y = education, fill = income)) +
+  geom_bar(position = "dodge") +
+  scale_y_discrete(limits = rev(levels(factor(df$education)))) +
+  scale_fill_manual(values = c("lightgreen", "salmon")) +
+  labs(x = "Count", y = "Education Level", fill = "Income") +
+  theme_classic()  
+```
+
+```{r}
+ggplot(df, aes(y = education.number,fill=income)) + 
+  geom_bar() +
+  labs(x = "Count", y = "Years of education", 
+       title = "Income Distribution by Years of education") +
+  theme_classic() 
+```
+
+In the martial status column, "Married-civ-spouse", "Married-spouse-absent", "Married-AF-spouse" are combined as "Married", and I change "Never-married" to "Single" and keep the remaining factors.
+
+```{r}
+df$marital.status <- as.character(df$marital.status)
+
+df$marital.status[df$marital.status == "Never_married"] <- "Single"
+
+df$marital.status[df$marital.status == "Married-civ-spouse" | df$marital.status == "Married-spouse-absent" | df$marital.status == "Married-AF-spouse"] <- "Married"
+
+unique(df$marital.status)
+```
+
+I did the same to the occupation where I combine the factors into "White-collar", "Blue-collar", "Professisonal", "Service", "Sales" and "Other".
+
+```{r}
+df$occupation <- as.character(df$occupation)
+
+df$occupation[df$occupation == "Adm-clerical" | df$occupation == "Exec-managerial"] <- "White-collar"
+df$occupation[df$occupation == "Handlers-cleaners" |df$occupation ==  "Transport-moving" | df$occupation == "Farming-fishing" |df$occupation == "Machine-op-inspct" |df$occupation == "Craft-repair" ] <- "Blue-collar"
+df$occupation[df$occupation == "Tech-support" | df$occupation == "Protective-serv" | df$occupation == "Priv-house-serv" | df$occupation == "Other-service"] <- "Service"
+df$occupation[df$occupation == "Prof-specialty"] <- "Professional"
+df$occupation[df$occupation == "Armed-Forces"] <- "Other"
+
+unique(df$occupation)
+```
+
+In the bar graph, people who have white collar and professional jobs are more likely to earn more than \$50k.
+
+```{r}
+ggplot(df, aes(y = reorder(occupation, -table(occupation)[occupation]), fill = income)) +
+  geom_bar(position = "dodge") +
+  scale_fill_brewer(palette = "Set2") +
+  labs(y = "Occupation", x = "Count", fill = "Income") 
+```
+
+It is noticeable that those who work 40 hours per week have much higher chance to earn higher than \$50k than those who work overtime or undertime. This makes sense because those who work overtime often do blue-collar job and get paid the minimum wage so they still have a low income despite their working hours per week.
+
+```{r}
+ggplot(df, aes(x= hours.per.week, fill=income)) + 
+  geom_bar() +
+  labs(x="Hours per week", y="Count") +
+  ggtitle('Income Classification by Hours per week')+
+  theme_classic()
+```
+
+As shown in the graph and table below, 24720 people earn less than or equal to \$50000 while there are only 7841 earning more than \$50000, which creates class imbalance, a common problem in classification that can affect the model accuracy.
+
+```{r}
+table(df$income)
+```
+
+```{r}
+barplot(table(df$income),main = 'Income Classification',col='pink',ylab ='Number of people')
+
+df$income <- as.factor(df$income)
+#A majority of people in this dataset earn below 50k
+```
+
+To perform machine learning techniques, the original dataset is split into training set, which accounts for 70% of the data, and testing set for the remaining 30% of the data. As mentioned earlier, the data imbalance in the response variable income needs to be addressed to prevent model inaccuracy. In a dataset with highly unbalanced classes, the classifier will always pick the most common one without actually performing any classification. Therefore, resampling techniques, oversampling and undersampling are used alternately to deal with class imbalance.
+
+```{r}
+#split data
+df$income <- as.factor(df$income)
+
+library(caTools)
+set.seed(200)
+
+sample <- sample.split(df$income,SplitRatio = 0.7)
+train <- subset(df, sample == TRUE)
+test <- subset(df, sample == FALSE)
+
+head(test)
+```
+
+```{r}
+#Address imbalanced data 
+library("ROSE")
+balanced_data <- ovun.sample(income~.,data = train,method = "both")$data
+print(table(train$income))
+print(table(balanced_data$income))
+```
+
+Before I do resampling in the train data, only 5256 people who earn more than \$50k and 15858 earn less than 50k, which will create class imbalance. However, after performing sampling technique, the number of people who earn more than \$50k and those who earn less than \$50k are roughly the same. This will enhance the performance of the models later on.
+
+III. Methods and Results
+
+For every model created, we will use the function confusionMatrix to compare the model performance by using the accuracy, sensitivity, specificity of each model.
+
+Logistic Regression The Logistic Regression model has the accuracy of 77.69%, sensitivity of 75.84%, and specificity of 83.26%
+
+```{r}
+library('caret')
+library('lattice')
+log_model <- glm(income ~ ., family = binomial(), balanced_data)
+log_pred <- predict(log_model, test, type = "response")
+log_pred <- ifelse(log_pred > 0.5, "1", "0")
+confusionMatrix(as.factor(log_pred), as.factor(test$income))
+```
+
+According to the logistic regression model, the most important features to determine whether an individual's income is more than \$50k is age, education number, hours per week, relationship and martial status.
+
+```{r}
+summary(log_model)
+```
+
+Random Forest
+
+This time I build Random Forest model with the number of trees equals to 500. The Random Forest model has the accuracy of 78.15%, sensitivity of 82.86%, and specificity of 76.59%
+
+```{r}
+library('randomForest')
+
+rf <- randomForest(income ~ ., data = balanced_data, ntree = 500)
+rf.pred <- predict(rf, newdata = test)
+confusionMatrix(as.factor(rf.pred),as.factor(test$income),positive = "1")
+
+```
+
+Support Vector Machine The Support Vector Machine model has the accuracy of 76.77%, sensitivity of 87.30%, and specificity of 73.28%
+
+```{r}
+library('e1071')
+svm_model <- svm(income ~ ., data = balanced_data)
+svm.pred <- predict(svm_model, newdata = test)
+confusionMatrix(svm.pred,test$income,positive = "1")
+
+```
+
+Decision Tree
+
+```{r}
+library("rpart")
+library("rpart.plot")
+dec_tree <- rpart(income~.,data=balanced_data,method='class')
+rpart.plot(dec_tree, box.col=c("salmon", "lavender"))
+```
+
+The Decision Tree model has the accuracy of 79.05%, sensitivity of 73.49%, and specificity of 80.89%
+
+```{r}
+dec_tree.pred <- predict(dec_tree, newdata = test,type="class")
+confusionMatrix(dec_tree.pred,test$income,positive = "1")
+```
+
+IV. Conclusion
+
+Performance Comparison As the graph shows, based on accuracy, the Decision model seems to have the best performance while the Support Vector Machine model has the lowest accuracy among four models. However, the accuracy difference between models is not large.
+
+```{r}
+accuracy<-data.frame(Model=c('Logistic Regression','Random Forest','Support Vector Machine','Decision Tree'),accuracy_of_models = c(0.7769,0.7815,0.7677,0.7905))
+ggplot(accuracy,aes(x=Model,y=accuracy_of_models,fill=Model))+geom_bar(stat = 'identity')+ggtitle('Accuracy of each model')
+
+```
+
+Application Building the machine learning models to predict whether an individual's income will exceed \$50k or not can have a huge application in real life. It can benefit researches about income inequality and inform the government on which groups of people might not have a good living standard and need financial assistance. One limitation of this study is that because this is a classification problem, we cannot build predictive model to predict the actual income of an individual.
